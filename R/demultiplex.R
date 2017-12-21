@@ -10,7 +10,7 @@
 #' @param umi.start Integer or vector of integers containing the start positions (inclusive, one-based numbering) of UMI sequences.
 #' @param umi.stop Integer or vector of integers containing the stop positions (inclusive, one-based numbering) of UMI sequences.
 #' @param keep Read trimming. Read length or number of nucleotides to keep for the read that contains transcript sequence information. Longer reads will be clipped at 3' end. Default is \strong{50}.
-#' @param min.qual Minimally acceptable Phred quality score for barcode and umi sequences. Phread quality scores are calculated for each nucleotide in the sequence. Sequences with at least one nucleotide with score lower than this will be filtered out. Default is \strong{27}.
+#' @param min.qual Minimally acceptable Phred quality score for barcode and umi sequences. Phread quality scores are calculated for each nucleotide in the sequence. Sequences with at least one nucleotide with score lower than this will be filtered out. Default is \strong{10}.
 #' @param yield.reads The number of reads to yield when drawing successive subsets from a fastq file, providing the number of successive records to be returned on each yield. Default is \strong{1e6}.
 #' @param out.dir Output directory for demultiplexing results. Demultiplexed fastq files will be stored in folders in this directory, respectively. \strong{Make sure the folder is empty.} Default is \code{"../Demultiplex"}.
 #' @param summary.prefix Prefix for demultiplex summary file. Default is \code{"demultiplex"}.
@@ -116,6 +116,13 @@ demultiplex <- function(fastq.annot,
   }
   parallel::stopCluster(cl)
   
+  summary.ensemble <- do.call("rbind", res.dt[, "summary"])
+  substitutions.aggregate <- do.call("+", res.dt[, "substitutions"])
+  total.bases <- sum(summary.ensemble[filename == "total", reads] -
+    summary.ensemble[filename == "undetermined", reads] -
+    summary.ensemble[filename == "low_quality", reads]) * 
+    (sum(bc.stop - bc.start) + length(bc.start))
+  
   print(paste(
     Sys.time(),
     paste(
@@ -129,7 +136,7 @@ demultiplex <- function(fastq.annot,
     )
   ))
   
-  fwrite(res.dt, file = file.path(out.dir, paste0(
+  fwrite(summary.ensemble, file = file.path(out.dir, paste0(
     format(Sys.time(), "%Y%m%d_%H%M%S"),
     "_",
     summary.prefix,
@@ -137,7 +144,9 @@ demultiplex <- function(fastq.annot,
   )), sep = "\t")
   
   message(paste(Sys.time(), "... Demultiplex done!"))
-  return(res.dt)
+  return(list(summary = summary.ensemble,
+              substitutions = substitutions.aggregate,
+              total.bases = total.bases))
 }
 
 
@@ -330,9 +339,58 @@ demultiplex.unit <- function(i,
                                       bc.correct.mem,
                                       barcode.dt[, barcode],
                                       bc.edit)]
+        
+        # basewise substitutions
+        
+        fqy.dt.sub <- fqy.dt[barcode != bc_correct, ]
+        
+        basevector <- unlist(strsplit(fqy.dt.sub[, barcode], ""),
+                             recursive = FALSE,
+                             use.names = FALSE)
+        basevector.c <- unlist(strsplit(fqy.dt.sub[, bc_correct], ""),
+          recursive = FALSE,
+          use.names = FALSE)
+        
+        ind.A <- which(basevector == "A")
+        ind.C <- which(basevector == "C")
+        ind.G <- which(basevector == "G")
+        ind.T <- which(basevector == "T")
+        
+        AtoC <- sum(basevector.c[ind.A] == "C")
+        AtoG <- sum(basevector.c[ind.A] == "G")
+        AtoT <- sum(basevector.c[ind.A] == "T")
+        
+        CtoA <- sum(basevector.c[ind.C] == "A")
+        CtoG <- sum(basevector.c[ind.C] == "G")
+        CtoT <- sum(basevector.c[ind.C] == "T")
+        
+        GtoA <- sum(basevector.c[ind.G] == "A")
+        GtoC <- sum(basevector.c[ind.G] == "C")
+        GtoT <- sum(basevector.c[ind.G] == "T")
+        
+        TtoA <- sum(basevector.c[ind.T] == "A")
+        TtoC <- sum(basevector.c[ind.T] == "C")
+        TtoG <- sum(basevector.c[ind.T] == "G")
+        
+        substitutions <- c("AtoC" = AtoC, "AtoG" = AtoG, "AtoT" = AtoT,
+                           "CtoA" = CtoA, "CtoG" = CtoG, "CtoT" = CtoT,
+                           "GtoA" = GtoA, "GtoC" = GtoC, "GtoT" = GtoT,
+                           "TtoA" = TtoA, "TtoC" = TtoC, "TtoG" = TtoG)
+        
+        if (sum(substitutions) != nrow(fqy.dt.sub)) {
+          stop(paste("Abort. Incorrect number of substitutions.", f2))
+        }
+        
       } else {
         fqy.dt[, bc_correct := barcode]
+        substitutions <- rep(0, 12)
+        names(substitutions) <- c("AtoC", "AtoG", "AtoT",
+                                  "CtoA", "CtoG", "CtoT",
+                                  "GtoA", "GtoC", "GtoT",
+                                  "TtoA", "TtoC", "TtoG")
       }
+      
+      total.bases <- nrow(fqy.dt) * (sum(bc.stop - bc.start) + length(bc.start))
       
       summary.dt[filename == "low_quality",
                  reads := reads + length(fqy1) - nrow(fqy.dt)]
@@ -439,6 +497,7 @@ demultiplex.unit <- function(i,
     append = TRUE
   )
   
-  return(summary.dt)
+  return(list(summary = summary.dt,
+              substitutions = substitutions))
 }
 

@@ -149,7 +149,7 @@ The following command maps the fastq files to GRCh38 mitochondrial reference seq
 
 ```{r eval=FALSE}
 # get the paths to demultiplexed fastq.gz files
-fastq.paths <- de[!(is.na(cell_num)), fastq_path]
+fastq.paths <- de[["summary"]][!(is.na(cell_num)), fastq_path]
 
 # map the reads
 al <- align.rsubread(

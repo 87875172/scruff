@@ -128,13 +128,18 @@ count.umi.unit <- function(i, features, format, logfile, verbose) {
                check.names = FALSE,
                fix.empty.names = FALSE))
   }
-
+  
   bfl <- Rsamtools::BamFile(i)
   bamGA <- GenomicAlignments::readGAlignments(bfl, use.names = T)
   
+  # UMI correction
   genome.reads <- data.table::data.table(
-    name = names(bamGA),
-    seqnames = as.vector(GenomicAlignments::seqnames(bamGA)))
+    readname = names(bamGA),
+    chr = as.vector(GenomicAlignments::seqnames(bamGA)),
+    strand = S4Vectors::decode(BiocGenerics::strand(bamGA)),
+    start = BiocGenerics::start(bamGA),
+    end = BiocGenerics::end(bamGA)
+  )
   
   if (length(unique(genome.reads[, name])) != nrow(genome.reads)) {
     stop (paste0("Corrupt BAM file ",
@@ -143,6 +148,13 @@ count.umi.unit <- function(i, features, format, logfile, verbose) {
                  " Try rerunning demultiplexing and alignment functions",
                  " with appropriate number of cores."))
   }
+  
+  genome.reads[, c("umi", "inferred_umi") :=
+          data.table::last(data.table::tstrsplit(readname, ":"))]
+  
+  
+  
+  
   
   # reads mapped to genome (exclude ERCC spike-in)
   reads.mapped.to.genome <- nrow(

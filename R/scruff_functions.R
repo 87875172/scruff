@@ -155,31 +155,6 @@ gtf.db.read <- function(gtf.file, logfile) {
 }
 
 
-# correct barcode mismatch 
-# implements memoization (closure)
-# deprecated
-bc.correct.fast <- function() {
-  res <- list()
-  mem.bc.correct <- function(bc, ref.barcodes, max.edit.dist) {
-    if (bc %in% names(res))
-      return (res[[bc]])
-    
-    sdm <- stringdist::stringdistmatrix(bc, ref.barcodes)
-    min.dist <- min(sdm)
-    if (min.dist <= max.edit.dist) {
-      ind <- which(sdm == min.dist)
-      if (length(ind) == 1) {
-        res[[bc]] <<- ref.barcodes[ind]
-        return (res[[bc]])
-      }
-    }
-    res[[bc]] <<- bc
-    return (res[[bc]])
-  }
-  return (mem.bc.correct)
-}
-
-
 # correct barcode mismatch using memoization
 bc.correct.mem <- local({
   res <- list()
@@ -187,9 +162,12 @@ bc.correct.mem <- local({
   f <- function(bc, ref.barcodes, max.edit.dist) {
     if (bc %in% names(res))
       return (res[[bc]])
-    sdm <- stringdist::stringdistmatrix(bc, ref.barcodes)
+    sdm <- stringdist::stringdistmatrix(bc,
+                                        ref.barcodes,
+                                        method = "hamming",
+                                        nthread = 1)
     min.dist <- min(sdm)
-    if (min.dist <= max.edit.dist) {
+    if (min.dist <= max.edit.dist & min.dist != 0) {
       ind <- which(sdm == min.dist)
       if (length(ind) == 1) {
         res[[bc]] <<- ref.barcodes[ind]
