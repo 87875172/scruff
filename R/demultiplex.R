@@ -145,8 +145,7 @@ demultiplex <- function(fastq.annot,
   
   message(paste(Sys.time(), "... Demultiplex done!"))
   return(list(summary = summary.ensemble,
-              substitutions = substitutions.aggregate,
-              total.bases = total.bases))
+              priors = substitutions.aggregate / total.bases))
 }
 
 
@@ -166,7 +165,7 @@ demultiplex.unit <- function(i,
                              summary.prefix,
                              overwrite,
                              logfile) {
-    
+  
   log.messages(Sys.time(),
                "... demultiplexing sample",
                i,

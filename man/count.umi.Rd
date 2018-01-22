@@ -4,15 +4,17 @@
 \alias{count.umi}
 \title{Count the number of UMIs for each transcript and output expression matrix}
 \usage{
-count.umi(alignment, features, format = "BAM", out.dir = "./Count",
-  cores = max(1, parallel::detectCores()/2), output.prefix = "countUMI",
-  verbose = FALSE, logfile.prefix = format(Sys.time(),
-  "\%Y\%m\%d_\%H\%M\%S"))
+count.umi(alignment, features, umi.edit = 1, priors, format = "BAM",
+  out.dir = "./Count", cores = max(1, parallel::detectCores()/2),
+  output.prefix = "countUMI", verbose = FALSE,
+  logfile.prefix = format(Sys.time(), "\%Y\%m\%d_\%H\%M\%S"))
 }
 \arguments{
 \item{alignment}{A character vector of the paths to input alignment files.}
 
 \item{features}{Path to the gtf reference file. For generation of TxDb objects from gtf files, please refer to \code{makeTxDbFromGFF} function in \code{GenomicFeatures} package.}
+
+\item{umi.edit}{Maximally allowed edit distance for UMI correction. UMI tags with mismatches equal or fewer than this will be assigned an inffered UMI tag if the probability of it arising from substitution errors of the inferred UMI tag is greater than 0.05 (p >= 0.05, Poisson probability density function).}
 
 \item{format}{Format of input sequence alignment files. \strong{"BAM"} or \strong{"SAM"}. Default is \strong{"BAM"}.}
 

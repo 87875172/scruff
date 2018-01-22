@@ -162,12 +162,16 @@ bc.correct.mem <- local({
   f <- function(bc, ref.barcodes, max.edit.dist) {
     if (bc %in% names(res))
       return (res[[bc]])
+    if (bc %in% ref.barcodes) {
+      res[[bc]] <<- bc
+      return (res[[bc]])
+    }
     sdm <- stringdist::stringdistmatrix(bc,
                                         ref.barcodes,
                                         method = "hamming",
                                         nthread = 1)
     min.dist <- min(sdm)
-    if (min.dist <= max.edit.dist & min.dist != 0) {
+    if (min.dist <= max.edit.dist) {
       ind <- which(sdm == min.dist)
       if (length(ind) == 1) {
         res[[bc]] <<- ref.barcodes[ind]
@@ -178,6 +182,65 @@ bc.correct.mem <- local({
     return (res[[bc]])
   }
 })
+
+
+# UMI correction Poisson
+umi.correct.poisson <- function(dt, max.edit.dist, priors) {
+  umis <- names(sort(table(dt$inferred_umi)))
+  
+  if (length(umis) > 1) {
+    i <- 1
+    while (i <= length(umis)) {
+      u <- umis[i]
+      i <- i + 1
+      
+      lambdas <- rep(0, length(umis))
+      
+      sdm <- stringdist::stringdistmatrix(u,
+                                          umis,
+                                          method = "hamming",
+                                          nthread = 1)
+      colnames(sdm) <- umis
+      rownames(sdm) <- u
+      sdm[which(sdm == 0)] <- NA
+      min.dist <- min(sdm, na.rm = TRUE)
+      if (min.dist <= max.edit.dist & min.dist != 0) {
+        inds <- which(sdm == min.dist)
+        
+        for (donor.ind in inds) {
+        
+          substitutions <- find.substitutions(u, umis[donor.ind])
+          p <- prod(priors[substitutions])
+          lambda <- nrow(dt[umi == umis[donor.ind]]) * p
+          lambdas[donor.ind] <- lambda
+        }
+      }
+      
+      err <- dpois(min.dist, lambda = sum(lambdas))
+      
+      if (err > 0.05) {
+        dt[inferred_umi == u,
+           inferred_umi := umis[data.table::last(which(lambdas == max(lambdas)))]]
+        umis <- names(sort(table(dt$inferred_umi)))
+        i <- 1
+      }
+    }
+  }
+  return (dt)
+}
+
+
+find.substitutions <- function(observed, inferred) {
+  o <- unlist(strsplit(observed, split = ""),
+              recursive = FALSE,
+              use.names = FALSE)
+  i <- unlist(strsplit(inferred, split = ""),
+              recursive = FALSE,
+              use.names = FALSE)
+  ind <- which(o != i)
+  res <- paste0(o[ind], "to", i[ind])
+  return (res)
+}
 
 
 to.bam <- function(sam,
@@ -367,17 +430,23 @@ collectqc <- function(de, al, co, biomart.annot.dt = NA) {
 #' @return A plot of stepping levels
 #' @import ggbio
 #' @export
-stepping <- function(bamGA, chr = "1", start = 1, end = max(BiocGenerics::end(bamGA))){
-  bamGA <- bamGA[BiocGenerics::start(bamGA) > (start-1) & BiocGenerics::end(bamGA) < end + 1]
+stepping <- function(bamGA,
+                     chr = "1",
+                     start = 1,
+                     end = max(BiocGenerics::end(bamGA))) {
+  
+  bamGA <- bamGA[BiocGenerics::start(bamGA) > (start-1) &
+                   BiocGenerics::end(bamGA) < end + 1]
   a <- GenomicRanges::GRanges(bamGA)
-  gr <- a[seqnames(a) == chr]
+  gr <- a[GenomeInfoDb::seqnames(a) == chr]
   name <- names(gr)
   name <- data.table::last(data.table::tstrsplit(name, ":"))
-  mcols(gr)$umi <- name
+  S4Vectors::mcols(gr)$umi <- name
   #g = ggplot2::ggplot(gr) + ggbio::stat_stepping(xlab = "segment",ylab = "stepping",
   #aes(color = umi, fill = umi))
-  g = ggplot2::ggplot(gr) + ggbio::geom_arrow(aes(color = umi))
-  g + ggplot2::theme(axis.text=element_text(size=12),
-             axis.title=element_text(size=14,face="bold"))
+  g = ggplot2::ggplot(gr) + ggbio::geom_arrow(ggplot2::aes(color = umi))
+  g + ggplot2::theme(axis.text = ggplot2::element_text(size = 12),
+             axis.title = ggplot2::element_text(size = 14, face = "bold"))
+  return (g)
 }
 

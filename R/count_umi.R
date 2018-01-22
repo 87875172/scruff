@@ -5,6 +5,7 @@
 #' 
 #' @param alignment A character vector of the paths to input alignment files.
 #' @param features Path to the gtf reference file. For generation of TxDb objects from gtf files, please refer to \code{makeTxDbFromGFF} function in \code{GenomicFeatures} package.
+#' @param umi.edit Maximally allowed edit distance for UMI correction. UMI tags with mismatches equal or fewer than this will be assigned an inffered UMI tag if the probability of it arising from substitution errors of the inferred UMI tag is greater than 0.05 (p >= 0.05, Poisson probability density function).
 #' @param format Format of input sequence alignment files. \strong{"BAM"} or \strong{"SAM"}. Default is \strong{"BAM"}.
 #' @param out.dir Output directory for UMI counting results. Expression table will be stored in this directory. Default is \code{"../Count"}.
 #' @param cores Number of cores used for parallelization. Default is \code{max(1, parallel::detectCores() / 2)}.
@@ -16,6 +17,8 @@
 #' @export
 count.umi <- function(alignment,
                       features,
+                      umi.edit = 1,
+                      priors,
                       format = "BAM",
                       out.dir = "./Count",
                       cores = max(1, parallel::detectCores() / 2),
@@ -79,7 +82,7 @@ count.umi <- function(alignment,
     .packages = c("BiocGenerics", "S4Vectors",
                   "GenomicFeatures", "GenomicAlignments")
   ) %dopar% {
-    count.umi.unit(i, features, format, logfile, verbose)
+    count.umi.unit(i, features, umi.edit, priors, logfile, verbose)
   }
   
   parallel::stopCluster(cl)
@@ -106,7 +109,7 @@ count.umi <- function(alignment,
 }
 
 
-count.umi.unit <- function(i, features, format, logfile, verbose) {
+count.umi.unit <- function(i, features, umi.edit, priors, logfile, verbose) {
   if (verbose) {
     log.messages(Sys.time(),
                  "... UMI counting sample",
@@ -132,16 +135,12 @@ count.umi.unit <- function(i, features, format, logfile, verbose) {
   bfl <- Rsamtools::BamFile(i)
   bamGA <- GenomicAlignments::readGAlignments(bfl, use.names = T)
   
-  # UMI correction
   genome.reads <- data.table::data.table(
     readname = names(bamGA),
-    chr = as.vector(GenomicAlignments::seqnames(bamGA)),
-    strand = S4Vectors::decode(BiocGenerics::strand(bamGA)),
-    start = BiocGenerics::start(bamGA),
-    end = BiocGenerics::end(bamGA)
+    chr = as.vector(GenomicAlignments::seqnames(bamGA))
   )
   
-  if (length(unique(genome.reads[, name])) != nrow(genome.reads)) {
+  if (length(unique(genome.reads[, readname])) != nrow(genome.reads)) {
     stop (paste0("Corrupt BAM file ",
                  i,
                  ". Duplicate read names detected.",
@@ -149,58 +148,108 @@ count.umi.unit <- function(i, features, format, logfile, verbose) {
                  " with appropriate number of cores."))
   }
   
-  genome.reads[, c("umi", "inferred_umi") :=
-          data.table::last(data.table::tstrsplit(readname, ":"))]
-  
-  
-  
-  
-  
   # reads mapped to genome (exclude ERCC spike-in)
   reads.mapped.to.genome <- nrow(
-    genome.reads[!grepl("ERCC", genome.reads[, seqnames]), .(name)])
+    genome.reads[!grepl("ERCC", genome.reads[, chr]), .(readname)])
 
-  # umi filtering
+  # subset exonic reads
   ol <- GenomicAlignments::findOverlaps(features, bamGA)
   
   ol.dt <- data.table::data.table(
     gene.id = base::names(features)[S4Vectors::queryHits(ol)],
-    name = base::names(bamGA)[S4Vectors::subjectHits(ol)],
-    pos = BiocGenerics::start(bamGA)[S4Vectors::subjectHits(ol)]
+    readname = base::names(bamGA)[S4Vectors::subjectHits(ol)],
+    start = BiocGenerics::start(bamGA)[S4Vectors::subjectHits(ol)],
+    end = BiocGenerics::end(bamGA)[S4Vectors::subjectHits(ol)],
+    strand = S4Vectors::decode(
+      BiocGenerics::strand(bamGA))[S4Vectors::subjectHits(ol)]
   )
   
-  ol.dt[, umi := data.table::last(data.table::tstrsplit(name, ":"))]
+  if (nrow(ol.dt) == 0) {
+    reads.mapped.to.genes <- 0
+    
+    # clean up
+    count.umi.dt <- data.table::data.table(gene.id = c(names(features),
+                                                       "reads_mapped_to_genome",
+                                                       "reads_mapped_to_genes"))
+    cell <- remove.last.extension(i)
+    count.umi.dt[[cell]] <- 0
+    count.umi.dt[gene.id == "reads_mapped_to_genome",
+                 cell] <- reads.mapped.to.genome
+    count.umi.dt[gene.id == "reads_mapped_to_genes",
+                 cell] <- reads.mapped.to.genes
+    
+    # coerce to data frame to keep rownames for cbind combination
+    count.umi.dt <- data.frame(count.umi.dt,
+                               row.names = 1,
+                               check.names = FALSE,
+                               fix.empty.names = FALSE)
+  } else {
+    ol.dt[, c("umi", "inferred_umi") :=
+            data.table::last(data.table::tstrsplit(readname, ":"))]
+    
+    # remove ambiguous gene alignments (union mode filtering)
+    ol.dt <- ol.dt[!(
+      base::duplicated(ol.dt, by = "readname") |
+        base::duplicated(ol.dt, by = "readname", fromLast = TRUE)
+    ), ]
+    
+    # reads mapped to genes
+    reads.mapped.to.genes <- nrow(ol.dt[!grepl("ERCC", ol.dt[, gene.id ]), ])
+    
+    if (umi.edit > 0 & !(any(is.na(priors)))) {
+      if (verbose) {
+        log.messages(Sys.time(),
+                     "... UMI correcting sample",
+                     i,
+                     "umi.edit = ",
+                     umi.edit,
+                     logfile = logfile,
+                     append = TRUE)
+      }
+      
+      # UMI correction
+      
+      # g <- stepping(bamGA, 12, 8.010e07, 8.011e07)
+      # Zfp36l1
+      
+      for (g in unique(ol.dt[, gene.id])) {
+      
+        ol.dt.gene <- ol.dt[gene.id == g]
+        
+        ol.dt.gene.cor <- umi.correct.poisson(ol.dt.gene, umi.edit, priors)
+        ol.dt[gene.id == g, inferred_umi := ol.dt.gene.cor$inferred_umi]
+      
+      }
+      
+      count.umi <- base::table(unique(ol.dt[, .(gene.id,
+                                                inferred_umi)])[, gene.id])
+    } else {
+      # umi filtering
+      count.umi <- base::table(unique(ol.dt[, .(gene.id, umi, pos)])[, gene.id])
+    }
+    
+    # report umi correction stats
+    
+    # clean up
+    count.umi.dt <- data.table::data.table(gene.id = c(names(features),
+                                                       "reads_mapped_to_genome",
+                                                       "reads_mapped_to_genes"))
+    cell <- remove.last.extension(i)
+    count.umi.dt[[cell]] <- 0
+    count.umi.dt[gene.id == "reads_mapped_to_genome",
+                 cell] <- reads.mapped.to.genome
+    count.umi.dt[gene.id == "reads_mapped_to_genes",
+                 cell] <- reads.mapped.to.genes
+    count.umi.dt[gene.id %in% names(count.umi),
+                 eval(cell) := as.numeric(count.umi[gene.id])]
+    
+    # coerce to data frame to keep rownames for cbind combination
+    count.umi.dt <- data.frame(count.umi.dt,
+                               row.names = 1,
+                               check.names = FALSE,
+                               fix.empty.names = FALSE)
+  }
   
-  # remove ambiguous gene alignments (union mode filtering)
-  ol.dt <- ol.dt[!(
-    base::duplicated(ol.dt, by = "name") |
-      base::duplicated(ol.dt, by = "name", fromLast = TRUE)
-  ), ]
-  
-  # reads mapped to genes
-  reads.mapped.to.genes <- nrow(ol.dt[!grepl("ERCC", ol.dt[, gene.id ]), ])
-  
-  # umi filtering
-  count.umi <- base::table(unique(ol.dt[, .(gene.id, umi, pos)])[, gene.id])
-  
-  # clean up
-  count.umi.dt <- data.table::data.table(gene.id = c(names(features),
-                                                     "reads_mapped_to_genome",
-                                                     "reads_mapped_to_genes"))
-  cell <- remove.last.extension(i)
-  count.umi.dt[[cell]] <- 0
-  count.umi.dt[gene.id == "reads_mapped_to_genome",
-               cell] <- reads.mapped.to.genome
-  count.umi.dt[gene.id == "reads_mapped_to_genes",
-               cell] <- reads.mapped.to.genes
-  count.umi.dt[gene.id %in% names(count.umi),
-               eval(cell) := as.numeric(count.umi[gene.id])]
-  
-  # coerce to data frame to keep rownames for cbind combination
-  count.umi.dt <- data.frame(count.umi.dt,
-                             row.names = 1,
-                             check.names = FALSE,
-                             fix.empty.names = FALSE)
   return (count.umi.dt)
 }
 
