@@ -613,7 +613,7 @@ count.unit <- function(cell,
     read.counts <- base::table(unique.gene.dt[, .(gene_id)])
     count.reads.dt <- data.table::data.table(gene_id = names(features.gene))
     
-    count.reads.dt[["reads"]] <- 0
+    count.reads.dt[, reads := 0]
     count.reads.dt[gene_id %in% names(read.counts),
                    reads := as.numeric(read.counts[gene_id])]
     count.reads.dt[, read_pseudo := reads + 1]
@@ -661,10 +661,15 @@ count.unit <- function(cell,
     
     unique.gene.dt[, umi := data.table::last(
       data.table::tstrsplit(readname, ":"))]
-    count.dt <- rbind(unique.gene.dt,
-                      multimapper.dt[assign == TRUE, .(readname,
-                                                       gene_id,
-                                                       umi)])
+    
+    if ("assign" %in% colnames(multimapper.dt)) {
+      count.dt <- rbind(unique.gene.dt,
+                        multimapper.dt[assign == TRUE, .(readname,
+                                                         gene_id,
+                                                         umi)])
+    } else {
+      count.dt <- unique.gene.dt
+    }
     
     # remove ambiguous gene alignments (union mode filtering)
     #ol.dt <- ol.dt[!(
