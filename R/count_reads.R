@@ -265,17 +265,26 @@ count.unit <- function(cell,
   
   if (nrow(ol.dt) == 0) {
     reads.mapped.to.gene <- 0
+    multimappers <- 0
+    corrected_multimappers <- 0
     # clean up
     count.gene.dt <- data.table::data.table(
       gene_id = c(names(features.gene),
                   "reads_mapped_to_genome",
-                  "reads_mapped_to_genes"))
+                  "reads_mapped_to_genes",
+                  "multimappers",
+                  "corrected_multimappers"))
     cellname <- remove.last.extension(cell)
     count.gene.dt[[cellname]] <- 0
     count.gene.dt[gene_id == "reads_mapped_to_genome",
                   cellname] <- reads.mapped.to.genome
-    count.gene.dt[gene_id == "reads_mapped_to_transcripts",
+    count.gene.dt[gene_id == "reads_mapped_to_genes",
                   cellname] <- reads.mapped.to.gene
+    count.gene.dt[gene_id == "multimappers",
+                  cellname] <- multimappers
+    count.gene.dt[gene_id == "corrected_multimappers",
+                  cellname] <- corrected_multimappers
+    
     
     # coerce to data frame to keep rownames for cbind combination
     return (data.frame(count.gene.dt,
@@ -382,10 +391,10 @@ count.unit <- function(cell,
                                    gene.probs.dt) {
       
       sumreads <- gene.probs.dt[, sum(read_pseudo)]
-      sumbincounts <- sum(bincounts + 1)
+      sumbincounts <- sum(bincounts)
       counter <- 1
       cutpoints <- seq(0, 1, 0.01)
-      multi.probs <- log((bincounts + 1) / sumbincounts)
+      multi.probs <- log10(bincounts / sumbincounts)
       
       # randomly choose multimapper one at a time to assign
       shuffledreads <- sample(unique(multi.gene.alignments[, readname]))
@@ -427,66 +436,80 @@ count.unit <- function(cell,
         # if tie, disregard
         
         if (length(unique(read.alignments[, joint])) > 1) {
-          read.alignments[
-            data.table::first(order(joint,
-                                    decreasing = TRUE)), assign := TRUE]
           
-          # abundance probability
-          g <- read.alignments[order(joint,
-                                     decreasing = TRUE), ][1,
-                                                           gene_id]
-          #gene.probs.dt[gene_id == g, reads := reads + 1]
-          gene.probs.dt[gene_id == g, read_pseudo := read_pseudo + 1]
-          sumreads <- sumreads + 1
+          # Absolute assignment. if tie, disregard
+          if (nrow(read.alignments[joint == max(joint), ]) == 1) {
           
-          # update gene.probs.dt
-          gene.probs.dt[gene_id == g,
-                        log_abund_prob := log(read_pseudo / sumreads)]
-          
-          # positional probability
-          rpmax <- read.alignments[
-            order(joint,
-                  decreasing = TRUE), ][1,
-                                        relative_position]
-          updatempb <- cut(rpmax,
-                           cutpoints,
-                           labels = FALSE,
-                           include.lowest = TRUE)
-          bincounts[updatempb] <- bincounts[updatempb] + 1
-          sumbincounts <- sumbincounts + 1
-          
-          # update multi.probs
-          multi.probs <- log((bincounts + 1) / sumbincounts)
-          
-          assigned.dt <- read.alignments[assign == TRUE, ]
-          
-          
-          multi.gene.alignments[readname == assigned.dt[, readname] &
-                                  txid == assigned.dt[, txid] &
-                                  readstart == assigned.dt[, readstart] &
-                                  readend == assigned.dt[, readend] &
-                                  strand == assigned.dt[, strand] &
-                                  gene_id == assigned.dt[, gene_id],
-                                assign := TRUE]
-          
-          #multi.gene.alignments <- merge(multi.gene.alignments,
-          #                               read.alignments[assign == TRUE,
-          #                                               .(readname,
-          #                                                 txid,
-          #                                                 readstart,
-          #                                                 readend,
-          #                                                 strand,
-          #                                                 gene_id,
-          #                                                 assign)],
-          #                               by = c("readname",
-          #                                      "txid",
-          #                                      "readstart",
-          #                                      "readend",
-          #                                      "strand",
-          #                                      "gene_id"),
-          #                               all.x = TRUE)
+          # Assign if P(max)/P(second max) > 10
+          #if ((read.alignments[order(joint,
+          #                           decreasing = TRUE), ][1, joint] -
+          #      read.alignments[order(joint,
+          #                            decreasing = TRUE), ][2, joint]) > 1) {
+            
+            read.alignments[
+              data.table::first(order(joint,
+                                      decreasing = TRUE)), assign := TRUE]
+            
+            # abundance probability
+            g <- read.alignments[order(joint,
+                                       decreasing = TRUE), ][1,
+                                                             gene_id]
+            #gene.probs.dt[gene_id == g, reads := reads + 1]
+            gene.probs.dt[gene_id == g, read_pseudo := read_pseudo + 1]
+            sumreads <- sumreads + 1
+            
+            # update gene.probs.dt
+            gene.probs.dt[, log_abund_prob := log10(read_pseudo / sumreads)]
+            
+            #gene.probs.dt[gene_id == g,
+            #              log_abund_prob := log10(read_pseudo / sumreads)]
+            
+            # positional probability
+            rpmax <- read.alignments[
+              order(joint,
+                    decreasing = TRUE), ][1,
+                                          relative_position]
+            updatempb <- cut(rpmax,
+                             cutpoints,
+                             labels = FALSE,
+                             include.lowest = TRUE)
+            bincounts[updatempb] <- bincounts[updatempb] + 1
+            sumbincounts <- sumbincounts + 1
+            
+            # update multi.probs
+            multi.probs <- log10(bincounts / sumbincounts)
+            
+            assigned.dt <- read.alignments[assign == TRUE, ]
+            
+            
+            multi.gene.alignments[readname == assigned.dt[, readname] &
+                                    txid == assigned.dt[, txid] &
+                                    readstart == assigned.dt[, readstart] &
+                                    readend == assigned.dt[, readend] &
+                                    strand == assigned.dt[, strand] &
+                                    gene_id == assigned.dt[, gene_id],
+                                  assign := TRUE]
+            
+            #multi.gene.alignments <- merge(multi.gene.alignments,
+            #                               read.alignments[assign == TRUE,
+            #                                               .(readname,
+            #                                                 txid,
+            #                                                 readstart,
+            #                                                 readend,
+            #                                                 strand,
+            #                                                 gene_id,
+            #                                                 assign)],
+            #                               by = c("readname",
+            #                                      "txid",
+            #                                      "readstart",
+            #                                      "readend",
+            #                                      "strand",
+            #                                      "gene_id"),
+            #                               all.x = TRUE)
+          }
         }
         
+        # these probs are only meaningful within alignments for one read
         multi.gene.alignments[readname == i,
                               log_pos_prob :=
                                 read.alignments[, log_pos_prob]]
@@ -617,7 +640,7 @@ count.unit <- function(cell,
     count.reads.dt[gene_id %in% names(read.counts),
                    reads := as.numeric(read.counts[gene_id])]
     count.reads.dt[, read_pseudo := reads + 1]
-    count.reads.dt[, log_abund_prob := log(read_pseudo / sum(read_pseudo))]
+    count.reads.dt[, log_abund_prob := log10(read_pseudo / sum(read_pseudo))]
     
     
     # positional probabilities
@@ -633,6 +656,9 @@ count.unit <- function(cell,
                            cutpoints,
                            labels = FALSE,
                            include.lowest = TRUE)
+    
+    # pseudo-count
+    multi.probs.bin <- c(multi.probs.bin, 1:100)
     
     bincounts <- table(multi.probs.bin)
     
@@ -655,8 +681,7 @@ count.unit <- function(cell,
     #end_time <- Sys.time()
     #print(end_time - start_time)
     
-    multimapper.dt[,
-                   umi := data.table::last(
+    multimapper.dt[, umi := data.table::last(
                      data.table::tstrsplit(readname, ":"))]
     
     unique.gene.dt[, umi := data.table::last(
@@ -667,9 +692,14 @@ count.unit <- function(cell,
                         multimapper.dt[assign == TRUE, .(readname,
                                                          gene_id,
                                                          umi)])
+      corrected_multimappers <- nrow(multimapper.dt[assign == TRUE, ])
     } else {
       count.dt <- unique.gene.dt
+      corrected_multimappers <- 0
     }
+    
+    multimappers <- nrow(rbind(unique(c1.dt.12[, .(readname)]),
+                               unique(c1.dt.uni7[, .(readname)])))
     
     # remove ambiguous gene alignments (union mode filtering)
     #ol.dt <- ol.dt[!(
@@ -687,7 +717,9 @@ count.unit <- function(cell,
     count.gene.dt <- data.table::data.table(
       gene_id = c(names(features.gene),
                   "reads_mapped_to_genome",
-                  "reads_mapped_to_genes"))
+                  "reads_mapped_to_genes",
+                  "multimappers",
+                  "corrected_multimappers"))
     cellname <- remove.last.extension(cell)
     count.gene.dt[[cellname]] <- 0
     count.gene.dt[gene_id == "reads_mapped_to_genome",
@@ -696,14 +728,17 @@ count.unit <- function(cell,
                   cellname] <- reads.mapped.to.gene
     count.gene.dt[gene_id %in% names(count.gene),
                   eval(cellname) := as.numeric(count.gene[gene_id])]
-    
+    count.gene.dt[gene_id == "multimappers",
+                  cellname] <- multimappers
+    count.gene.dt[gene_id == "corrected_multimappers",
+                  cellname] <- corrected_multimappers
     # coerce to data frame to keep rownames for cbind combination
     count.gene.dt <- data.frame(count.gene.dt,
                                 row.names = 1,
                                 check.names = FALSE,
                                 fix.empty.names = FALSE)
+    return (count.gene.dt)
   }
-  return (count.gene.dt)
 }
 
 
