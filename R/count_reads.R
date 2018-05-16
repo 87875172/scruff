@@ -441,71 +441,72 @@ count.unit <- function(cell,
           if (nrow(read.alignments[joint == max(joint), ]) == 1) {
           
           # Assign if P(max)/P(second max) > 10
-          #if ((read.alignments[order(joint,
-          #                           decreasing = TRUE), ][1, joint] -
-          #      read.alignments[order(joint,
-          #                            decreasing = TRUE), ][2, joint]) > 1) {
-            
-            read.alignments[
-              data.table::first(order(joint,
-                                      decreasing = TRUE)), assign := TRUE]
-            
-            # abundance probability
-            g <- read.alignments[order(joint,
-                                       decreasing = TRUE), ][1,
-                                                             gene_id]
-            #gene.probs.dt[gene_id == g, reads := reads + 1]
-            gene.probs.dt[gene_id == g, read_pseudo := read_pseudo + 1]
-            sumreads <- sumreads + 1
-            
-            # update gene.probs.dt
-            gene.probs.dt[, log_abund_prob := log10(read_pseudo / sumreads)]
-            
-            #gene.probs.dt[gene_id == g,
-            #              log_abund_prob := log10(read_pseudo / sumreads)]
-            
-            # positional probability
-            rpmax <- read.alignments[
-              order(joint,
-                    decreasing = TRUE), ][1,
-                                          relative_position]
-            updatempb <- cut(rpmax,
-                             cutpoints,
-                             labels = FALSE,
-                             include.lowest = TRUE)
-            bincounts[updatempb] <- bincounts[updatempb] + 1
-            sumbincounts <- sumbincounts + 1
-            
-            # update multi.probs
-            multi.probs <- log10(bincounts / sumbincounts)
-            
-            assigned.dt <- read.alignments[assign == TRUE, ]
-            
-            
-            multi.gene.alignments[readname == assigned.dt[, readname] &
-                                    txid == assigned.dt[, txid] &
-                                    readstart == assigned.dt[, readstart] &
-                                    readend == assigned.dt[, readend] &
-                                    strand == assigned.dt[, strand] &
-                                    gene_id == assigned.dt[, gene_id],
-                                  assign := TRUE]
-            
-            #multi.gene.alignments <- merge(multi.gene.alignments,
-            #                               read.alignments[assign == TRUE,
-            #                                               .(readname,
-            #                                                 txid,
-            #                                                 readstart,
-            #                                                 readend,
-            #                                                 strand,
-            #                                                 gene_id,
-            #                                                 assign)],
-            #                               by = c("readname",
-            #                                      "txid",
-            #                                      "readstart",
-            #                                      "readend",
-            #                                      "strand",
-            #                                      "gene_id"),
-            #                               all.x = TRUE)
+            if ((read.alignments[order(joint,
+                                      decreasing = TRUE), ][1, joint] -
+                 read.alignments[order(joint,
+                                       decreasing = TRUE), ][2, joint]) > 1) {
+              
+              read.alignments[
+                data.table::first(order(joint,
+                                        decreasing = TRUE)), assign := TRUE]
+              
+              # abundance probability
+              g <- read.alignments[order(joint,
+                                         decreasing = TRUE), ][1,
+                                                               gene_id]
+              #gene.probs.dt[gene_id == g, reads := reads + 1]
+              gene.probs.dt[gene_id == g, read_pseudo := read_pseudo + 1]
+              sumreads <- sumreads + 1
+              
+              # update gene.probs.dt
+              gene.probs.dt[, log_abund_prob := log10(read_pseudo / sumreads)]
+              
+              #gene.probs.dt[gene_id == g,
+              #              log_abund_prob := log10(read_pseudo / sumreads)]
+              
+              # positional probability
+              rpmax <- read.alignments[
+                order(joint,
+                      decreasing = TRUE), ][1,
+                                            relative_position]
+              updatempb <- cut(rpmax,
+                               cutpoints,
+                               labels = FALSE,
+                               include.lowest = TRUE)
+              bincounts[updatempb] <- bincounts[updatempb] + 1
+              sumbincounts <- sumbincounts + 1
+              
+              # update multi.probs
+              multi.probs <- log10(bincounts / sumbincounts)
+              
+              assigned.dt <- read.alignments[assign == TRUE, ]
+              
+              
+              multi.gene.alignments[readname == assigned.dt[, readname] &
+                                      txid == assigned.dt[, txid] &
+                                      readstart == assigned.dt[, readstart] &
+                                      readend == assigned.dt[, readend] &
+                                      strand == assigned.dt[, strand] &
+                                      gene_id == assigned.dt[, gene_id],
+                                    assign := TRUE]
+              
+              #multi.gene.alignments <- merge(multi.gene.alignments,
+              #                               read.alignments[assign == TRUE,
+              #                                               .(readname,
+              #                                                 txid,
+              #                                                 readstart,
+              #                                                 readend,
+              #                                                 strand,
+              #                                                 gene_id,
+              #                                                 assign)],
+              #                               by = c("readname",
+              #                                      "txid",
+              #                                      "readstart",
+              #                                      "readend",
+              #                                      "strand",
+              #                                      "gene_id"),
+              #                               all.x = TRUE)
+            }
           }
         }
         
